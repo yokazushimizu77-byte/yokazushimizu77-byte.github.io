@@ -1,7 +1,8 @@
 import { Employee, LunchMenu, Reservation, ChangeLog, NotificationSetting } from '../types';
 import defaultStoreData from '../../data_store.json';
+import { INITIAL_EMPLOYEES } from '../data/initialData';
 
-const LOCAL_STORE_KEY = 'relife_hub_store_v1';
+const LOCAL_STORE_KEY = 'relife_hub_store_v2';
 
 export interface LocalStoreData {
   employees: Employee[];
@@ -32,15 +33,22 @@ export const getLocalStore = (): LocalStoreData => {
         notificationSetting: parsed.notificationSetting || (defaultStoreData.notificationSetting as NotificationSetting),
       };
 
-      // Ensure key accounts from defaultStoreData (such as Shimizu EMP011, Takeda EMP009, Yoshida EMP010) exist
-      (defaultStoreData.employees as Employee[]).forEach((defaultEmp) => {
-        const found = store.employees.find((e) => e.id === defaultEmp.id || (e.email && e.email.toLowerCase() === defaultEmp.email?.toLowerCase()));
+      // Ensure key accounts from INITIAL_EMPLOYEES and defaultStoreData exist
+      const sourceEmployees: Employee[] = [
+        ...(INITIAL_EMPLOYEES || []),
+        ...((defaultStoreData.employees as Employee[]) || []),
+      ];
+
+      sourceEmployees.forEach((srcEmp) => {
+        const found = store.employees.find(
+          (e) => e.id === srcEmp.id || (e.email && srcEmp.email && e.email.toLowerCase() === srcEmp.email.toLowerCase())
+        );
         if (!found) {
-          store.employees.push({ ...defaultEmp });
-        } else if (defaultEmp.id === 'EMP011' && (!found.password || found.password === '1234')) {
-          // Keep Shimizu's password synced if not updated
-          found.password = defaultEmp.password || 'Relife0501';
-          found.email = defaultEmp.email || 'yokazu.shimizu77@gmail.com';
+          store.employees.push({ ...srcEmp });
+        } else if (srcEmp.id === 'EMP011') {
+          // Always keep Shimizu's credentials active and valid
+          if (!found.email || found.email !== srcEmp.email) found.email = srcEmp.email;
+          if (!found.password || found.password === '1234') found.password = srcEmp.password || 'Relife0501';
         }
       });
 
@@ -50,9 +58,16 @@ export const getLocalStore = (): LocalStoreData => {
     console.warn('Failed to parse localStorage, resetting to default store:', err);
   }
 
-  // First time or parsing failed: initialize with defaultStoreData
+  // First time or parsing failed: initialize with defaultStoreData merged with INITIAL_EMPLOYEES
+  const initialEmployees = [...(defaultStoreData.employees as Employee[])];
+  INITIAL_EMPLOYEES.forEach((emp) => {
+    if (!initialEmployees.some((e) => e.id === emp.id || (e.email && emp.email && e.email.toLowerCase() === emp.email.toLowerCase()))) {
+      initialEmployees.push({ ...emp });
+    }
+  });
+
   const initialStore: LocalStoreData = {
-    employees: JSON.parse(JSON.stringify(defaultStoreData.employees)),
+    employees: initialEmployees,
     lunchMenus: JSON.parse(JSON.stringify(defaultStoreData.lunchMenus)),
     reservations: JSON.parse(JSON.stringify(defaultStoreData.reservations)),
     changeLogs: JSON.parse(JSON.stringify(defaultStoreData.changeLogs)),
@@ -90,11 +105,25 @@ export const authenticateLocally = (
   const store = getLocalStore();
   const cleanInput = toHalfWidth(emailOrId.trim()).toLowerCase();
 
-  const matched = store.employees.find((emp) => {
+  let matched = store.employees.find((emp) => {
     const empEmail = emp.email ? toHalfWidth(emp.email.trim()).toLowerCase() : '';
     const empId = toHalfWidth(emp.id.trim()).toLowerCase();
     return empEmail === cleanInput || empId === cleanInput;
   });
+
+  // Direct fallback to INITIAL_EMPLOYEES if somehow not present in local store
+  if (!matched) {
+    matched = INITIAL_EMPLOYEES.find((emp) => {
+      const empEmail = emp.email ? toHalfWidth(emp.email.trim()).toLowerCase() : '';
+      const empId = toHalfWidth(emp.id.trim()).toLowerCase();
+      return empEmail === cleanInput || empId === cleanInput;
+    });
+    if (matched) {
+      // Re-save into localStore
+      store.employees.push({ ...matched });
+      saveLocalStore({ employees: store.employees });
+    }
+  }
 
   if (!matched) {
     return {
