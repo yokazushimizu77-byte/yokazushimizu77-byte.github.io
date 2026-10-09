@@ -15,6 +15,7 @@ import { NotificationSettingsModal } from './components/NotificationSettingsModa
 import { RoleAccessModal } from './components/RoleAccessModal';
 import { LoginModal } from './components/LoginModal';
 import { Bell, Sparkles, CheckCircle2, AlertCircle, Info } from 'lucide-react';
+import { getLocalStore, saveLocalStore } from './utils/localStore';
 
 export default function App() {
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -64,27 +65,59 @@ export default function App() {
 
   // Fetch initial data
   const fetchData = useCallback(async () => {
+    let loadedFromServer = false;
     try {
       const res = await fetch('/api/initial-data');
       if (res.ok) {
-        const data = await res.json();
-        setEmployees(data.employees || []);
-        setLunchMenus(data.lunchMenus || []);
-        setReservations(data.reservations || []);
-        setChangeLogs(data.changeLogs || []);
-        if (data.notificationSetting) setNotificationSetting(data.notificationSetting);
+        const ct = res.headers.get('content-type');
+        if (ct && ct.includes('application/json')) {
+          const data = await res.json();
+          setEmployees(data.employees || []);
+          setLunchMenus(data.lunchMenus || []);
+          setReservations(data.reservations || []);
+          setChangeLogs(data.changeLogs || []);
+          if (data.notificationSetting) setNotificationSetting(data.notificationSetting);
+          loadedFromServer = true;
 
-        // Restore logged in user session if exists in localStorage
-        const savedEmpId = localStorage.getItem('hub_logged_in_employee_id');
-        if (savedEmpId && data.employees?.length > 0) {
-          const found = data.employees.find((e: Employee) => e.id === savedEmpId);
-          if (found) {
-            setCurrentEmployee(found);
+          // Backup into localStore
+          saveLocalStore({
+            employees: data.employees,
+            lunchMenus: data.lunchMenus,
+            reservations: data.reservations,
+            changeLogs: data.changeLogs,
+            notificationSetting: data.notificationSetting,
+          });
+
+          // Restore logged in user session if exists in localStorage
+          const savedEmpId = localStorage.getItem('hub_logged_in_employee_id');
+          if (savedEmpId && data.employees?.length > 0) {
+            const found = data.employees.find((e: Employee) => e.id === savedEmpId);
+            if (found) {
+              setCurrentEmployee(found);
+            }
           }
         }
       }
     } catch (err) {
-      console.error('Failed to fetch initial data:', err);
+      console.warn('Backend API not available, switching to local store:', err);
+    }
+
+    if (!loadedFromServer) {
+      // Local fallback for static hosting (GitHub Pages) or offline mode
+      const store = getLocalStore();
+      setEmployees(store.employees);
+      setLunchMenus(store.lunchMenus);
+      setReservations(store.reservations);
+      setChangeLogs(store.changeLogs);
+      if (store.notificationSetting) setNotificationSetting(store.notificationSetting);
+
+      const savedEmpId = localStorage.getItem('hub_logged_in_employee_id');
+      if (savedEmpId && store.employees?.length > 0) {
+        const found = store.employees.find((e: Employee) => e.id === savedEmpId);
+        if (found) {
+          setCurrentEmployee(found);
+        }
+      }
     }
   }, []);
 
@@ -94,15 +127,22 @@ export default function App() {
 
   // SSE Stream Setup for Real-Time Syncing Across All Browsers/Tabs
   useEffect(() => {
-    const eventSource = new EventSource('/api/stream');
+    let eventSource: EventSource | null = null;
+    try {
+      eventSource = new EventSource('/api/stream');
 
-    eventSource.onopen = () => {
-      setIsRealtimeConnected(true);
-    };
+      eventSource.onopen = () => {
+        setIsRealtimeConnected(true);
+      };
 
-    eventSource.addEventListener('connected', () => {
-      setIsRealtimeConnected(true);
-    });
+      eventSource.onerror = () => {
+        // Silently disconnect on static hosts like GitHub Pages
+        setIsRealtimeConnected(false);
+      };
+
+      eventSource.addEventListener('connected', () => {
+        setIsRealtimeConnected(true);
+      });
 
     eventSource.addEventListener('reservation-updated', (e: MessageEvent) => {
       try {
@@ -288,9 +328,14 @@ export default function App() {
       setIsRealtimeConnected(false);
     };
 
-    return () => {
-      eventSource.close();
-    };
+      return () => {
+        if (eventSource) {
+          eventSource.close();
+        }
+      };
+    } catch (sseErr) {
+      console.warn('SSE not supported or failed to connect:', sseErr);
+    }
   }, [showToast]);
 
   // Initial Employee Registration Handler (Admin Only)
@@ -300,6 +345,7 @@ export default function App() {
       return false;
     }
 
+    let serverSuccess = false;
     try {
       const res = await fetch('/api/employees/register', {
         method: 'POST',
@@ -311,24 +357,37 @@ export default function App() {
       });
 
       const data = await res.json();
-      if (!res.ok) {
-        alert(data.error || '登録に失敗しました');
+      if (res.ok && data.employees) {
+        setEmployees(data.employees);
+        serverSuccess = true;
+        fetchData();
+        showToast(`社員「${newEmp.name} (${newEmp.id})」の初期登録が完了しました。`, '登録成功', 'success');
+        return true;
+      }
+    } catch (err) {
+      // Backend not available (e.g. GitHub Pages)
+    }
+
+    if (!serverSuccess) {
+      const store = getLocalStore();
+      const existing = store.employees.find((e) => e.id === newEmp.id);
+      if (existing) {
+        alert('その社員IDは既に存在します。');
         return false;
       }
-
-      if (data.employees) {
-        setEmployees(data.employees);
-      }
-
-      // Refresh data to fetch auto-generated reservations
-      fetchData();
-      showToast(`社員「${newEmp.name} (${newEmp.id})」の初期登録が完了しました。`, '登録成功', 'success');
+      const fullNewEmp: Employee = {
+        ...newEmp,
+        avatarColor: 'bg-indigo-600',
+        email: '',
+        password: '1234',
+      };
+      const updatedEmployees = [...store.employees, fullNewEmp];
+      setEmployees(updatedEmployees);
+      saveLocalStore({ employees: updatedEmployees });
+      showToast(`社員「${newEmp.name} (${newEmp.id})」を登録しました。`, '登録成功', 'success');
       return true;
-    } catch (err) {
-      console.error('Failed to register employee:', err);
-      alert('初期登録処理中にエラーが発生しました。');
-      return false;
     }
+    return false;
   };
 
   // Employee Profile Update Handler (Admin Only)
@@ -346,6 +405,7 @@ export default function App() {
       return false;
     }
 
+    let serverSuccess = false;
     try {
       const res = await fetch('/api/employees/update', {
         method: 'POST',
@@ -357,28 +417,49 @@ export default function App() {
       });
 
       const data = await res.json();
-      if (!res.ok) {
-        alert(data.error || '登録情報の更新に失敗しました。');
-        return false;
-      }
-
-      if (data.employees) {
+      if (res.ok && data.employees) {
         setEmployees(data.employees);
-        // If current logged-in employee was modified, update local currentEmployee
         if (data.employee && data.employee.id === (data.oldId || currentEmployee.id)) {
           setCurrentEmployee(data.employee);
           localStorage.setItem('hub_logged_in_employee_id', data.employee.id);
         }
+        serverSuccess = true;
+        fetchData();
+        showToast('登録情報を正常に修正しました。', '更新完了', 'success');
+        return true;
       }
+    } catch (err) {
+      // Backend not available
+    }
 
-      fetchData();
+    if (!serverSuccess) {
+      const store = getLocalStore();
+      const updatedEmployees = store.employees.map((e) => {
+        if (e.id === updateData.targetEmployeeId) {
+          const updated: Employee = {
+            ...e,
+            id: updateData.newId || e.id,
+            name: updateData.name,
+            department: updateData.department,
+            role: updateData.role,
+            email: updateData.email !== undefined ? updateData.email : e.email,
+            password: updateData.password !== undefined ? updateData.password : e.password,
+          };
+          if (currentEmployee.id === updateData.targetEmployeeId) {
+            setCurrentEmployee(updated);
+            localStorage.setItem('hub_logged_in_employee_id', updated.id);
+          }
+          return updated;
+        }
+        return e;
+      });
+
+      setEmployees(updatedEmployees);
+      saveLocalStore({ employees: updatedEmployees });
       showToast('登録情報を正常に修正しました。', '更新完了', 'success');
       return true;
-    } catch (err) {
-      console.error('Failed to update employee info:', err);
-      alert('登録情報修正処理中にエラーが発生しました。');
-      return false;
     }
+    return false;
   };
 
   // Employee Deletion Handler (Admin Only)
@@ -388,6 +469,7 @@ export default function App() {
       return false;
     }
 
+    let serverSuccess = false;
     try {
       const res = await fetch('/api/employees/delete', {
         method: 'POST',
@@ -399,26 +481,33 @@ export default function App() {
       });
 
       const data = await res.json();
-      if (!res.ok) {
-        alert(data.error || '削除に失敗しました。');
-        return false;
-      }
-
-      if (data.employees) {
+      if (res.ok && data.employees) {
         setEmployees(data.employees);
         if (currentEmployee.id === targetEmployeeId && data.employees.length > 0) {
           setCurrentEmployee(data.employees[0]);
         }
+        serverSuccess = true;
       }
-
-      setReservations((prev) => prev.filter((r) => r.employeeId !== targetEmployeeId));
-      showToast('指定した利用者をシステムから削除しました。', '削除完了', 'success');
-      return true;
     } catch (err) {
-      console.error('Failed to delete employee:', err);
-      alert('削除処理中にエラーが発生しました。');
-      return false;
+      // Backend not available
     }
+
+    if (!serverSuccess) {
+      const store = getLocalStore();
+      const updatedEmployees = store.employees.filter((e) => e.id !== targetEmployeeId);
+      const updatedReservations = store.reservations.filter((r) => r.employeeId !== targetEmployeeId);
+      setEmployees(updatedEmployees);
+      setReservations(updatedReservations);
+      saveLocalStore({ employees: updatedEmployees, reservations: updatedReservations });
+      if (currentEmployee.id === targetEmployeeId && updatedEmployees.length > 0) {
+        setCurrentEmployee(updatedEmployees[0]);
+      }
+    } else {
+      setReservations((prev) => prev.filter((r) => r.employeeId !== targetEmployeeId));
+    }
+
+    showToast('指定した利用者をシステムから削除しました。', '削除完了', 'success');
+    return true;
   };
 
   // Lunch Menu Save Handler (Admin Only)
@@ -435,6 +524,7 @@ export default function App() {
       return false;
     }
 
+    let serverSuccess = false;
     try {
       const res = await fetch('/api/lunch-menus/save', {
         method: 'POST',
@@ -446,21 +536,39 @@ export default function App() {
       });
 
       const data = await res.json();
-      if (!res.ok) {
-        alert(data.error || 'メニューの保存に失敗しました。');
-        return false;
-      }
-
-      if (data.lunchMenus) {
+      if (res.ok && data.lunchMenus) {
         setLunchMenus(data.lunchMenus);
+        serverSuccess = true;
+        showToast(`メニュー「[${menuData.code}] ${menuData.name}」を保存しました。`, 'メニュー更新', 'success');
+        return true;
       }
+    } catch (err) {
+      // Backend not available
+    }
+
+    if (!serverSuccess) {
+      const store = getLocalStore();
+      let updatedMenus: LunchMenu[];
+      if (menuData.id) {
+        updatedMenus = store.lunchMenus.map((m) =>
+          m.id === menuData.id
+            ? { ...m, ...menuData, description: menuData.description || m.description || '', id: menuData.id! }
+            : m
+        );
+      } else {
+        const newMenu: LunchMenu = {
+          id: `MENU_${Date.now()}`,
+          ...menuData,
+          description: menuData.description || '',
+        };
+        updatedMenus = [...store.lunchMenus, newMenu];
+      }
+      setLunchMenus(updatedMenus);
+      saveLocalStore({ lunchMenus: updatedMenus });
       showToast(`メニュー「[${menuData.code}] ${menuData.name}」を保存しました。`, 'メニュー更新', 'success');
       return true;
-    } catch (err) {
-      console.error('Failed to save lunch menu:', err);
-      alert('メニューの保存中にエラーが発生しました。');
-      return false;
     }
+    return false;
   };
 
   // Lunch Menu Delete Handler (Admin Only)
@@ -470,6 +578,7 @@ export default function App() {
       return false;
     }
 
+    let serverSuccess = false;
     try {
       const res = await fetch('/api/lunch-menus/delete', {
         method: 'POST',
@@ -481,21 +590,23 @@ export default function App() {
       });
 
       const data = await res.json();
-      if (!res.ok) {
-        alert(data.error || 'メニューの削除に失敗しました。');
-        return false;
-      }
-
-      if (data.lunchMenus) {
+      if (res.ok && data.lunchMenus) {
         setLunchMenus(data.lunchMenus);
+        serverSuccess = true;
       }
-      showToast('指定した弁当メニューを削除しました。', 'メニュー削除完了', 'info');
-      return true;
     } catch (err) {
-      console.error('Failed to delete lunch menu:', err);
-      alert('メニューの削除中にエラーが発生しました。');
-      return false;
+      // Backend not available
     }
+
+    if (!serverSuccess) {
+      const store = getLocalStore();
+      const updatedMenus = store.lunchMenus.filter((m) => m.id !== id);
+      setLunchMenus(updatedMenus);
+      saveLocalStore({ lunchMenus: updatedMenus });
+    }
+
+    showToast('指定した弁当メニューを削除しました。', 'メニュー削除完了', 'info');
+    return true;
   };
 
   // Update handler
@@ -506,6 +617,7 @@ export default function App() {
   ) => {
     if (!currentEmployee) return;
 
+    let serverSuccess = false;
     try {
       const res = await fetch('/api/reservations/update', {
         method: 'POST',
@@ -520,7 +632,6 @@ export default function App() {
       });
 
       const data = await res.json();
-
       if (res.ok) {
         if (data.updatedRecords && Array.isArray(data.updatedRecords)) {
           setReservations((prev) => {
@@ -537,12 +648,60 @@ export default function App() {
           setChangeLogs((prev) => [...data.newLogs, ...prev]);
         }
         showToast('予約内容を変更・履歴に記録して保存しました。', '更新完了', 'success');
-      } else {
-        alert(data.error || '予約の更新に失敗しました。');
+        serverSuccess = true;
       }
     } catch (err) {
-      console.error('Failed to update reservations:', err);
-      alert('予約の更新処理中にエラーが発生しました。');
+      // Backend not available
+    }
+
+    if (!serverSuccess) {
+      // Client-side fallback: update reservations and logs in state & localStorage
+      let updatedReservationsList: Reservation[] = [];
+      setReservations((prev) => {
+        const copy = [...prev];
+        updates.forEach((u) => {
+          const idx = copy.findIndex((r) => r.employeeId === employeeId && r.date === u.date);
+          if (idx !== -1) {
+            copy[idx] = { ...copy[idx], ...u, updatedAt: new Date().toISOString() };
+          } else {
+            copy.push({
+              id: `RES_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+              employeeId,
+              date: u.date,
+              attendance: u.attendance || 'フル',
+              lunchStatus: u.lunchStatus || 'なし',
+              lunchMenuId: u.lunchMenuId || null,
+              status: u.status || 'draft',
+              updatedAt: new Date().toISOString(),
+            });
+          }
+        });
+        updatedReservationsList = copy;
+        return copy;
+      });
+
+      const newLog: ChangeLog = {
+        id: `LOG_${Date.now()}`,
+        reservationId: `RES_${employeeId}_${updates[0]?.date || ''}`,
+        employeeId,
+        employeeName: employees.find((e) => e.id === employeeId)?.name || employeeId,
+        date: updates[0]?.date || new Date().toISOString().substring(0, 10),
+        modifiedBy: currentEmployee.id,
+        modifiedByName: `${currentEmployee.name} (${currentEmployee.role === 'admin' ? '管理者' : '一般社員'})`,
+        timestamp: new Date().toISOString(),
+        action: 'update',
+        beforeState: {},
+        afterState: updates[0],
+        reason: reason || '利用者の変更登録',
+      };
+
+      setChangeLogs((prev) => {
+        const copyLogs = [newLog, ...prev];
+        saveLocalStore({ reservations: updatedReservationsList, changeLogs: copyLogs });
+        return copyLogs;
+      });
+
+      showToast('予約内容を変更してブラウザに保存しました。', '更新完了', 'success');
     }
   };
 
@@ -550,6 +709,7 @@ export default function App() {
   const handleConfirmMonth = async (employeeId: string, month: string, status: 'confirmed' | 'locked' = 'confirmed') => {
     if (!currentEmployee) return;
 
+    let serverSuccess = false;
     try {
       const res = await fetch('/api/reservations/confirm', {
         method: 'POST',
@@ -565,9 +725,24 @@ export default function App() {
 
       if (res.ok) {
         showToast(`${month}月分の予約を${status === 'locked' ? 'ロック' : '確定'}しました。`, '処理完了', 'success');
+        serverSuccess = true;
       }
     } catch (err) {
-      console.error('Failed to confirm month:', err);
+      // Backend not available
+    }
+
+    if (!serverSuccess) {
+      setReservations((prev) => {
+        const updated = prev.map((r) => {
+          if ((!employeeId || r.employeeId === employeeId) && r.date.startsWith(month)) {
+            return { ...r, status };
+          }
+          return r;
+        });
+        saveLocalStore({ reservations: updated });
+        return updated;
+      });
+      showToast(`${month}月分の予約を${status === 'locked' ? 'ロック' : '確定'}しました。`, '処理完了', 'success');
     }
   };
 
@@ -684,6 +859,10 @@ export default function App() {
         isOpen={isCSVModalOpen}
         onClose={() => setIsCSVModalOpen(false)}
         currentMonth={`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`}
+        employees={employees}
+        reservations={reservations}
+        lunchMenus={lunchMenus}
+        changeLogs={changeLogs}
       />
 
       <NotificationSettingsModal

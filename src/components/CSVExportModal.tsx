@@ -1,21 +1,41 @@
 import React, { useState } from 'react';
 import { Download, FileSpreadsheet, Users, FileText, Calendar, Utensils, X } from 'lucide-react';
+import { Employee, LunchMenu, Reservation, ChangeLog } from '../types';
+import { generateAndDownloadCSV, getLocalStore } from '../utils/localStore';
 
 interface CSVExportModalProps {
   isOpen: boolean;
   onClose: () => void;
   currentMonth: string;
+  employees?: Employee[];
+  reservations?: Reservation[];
+  lunchMenus?: LunchMenu[];
+  changeLogs?: ChangeLog[];
 }
 
-export const CSVExportModal: React.FC<CSVExportModalProps> = ({ isOpen, onClose, currentMonth }) => {
+export const CSVExportModal: React.FC<CSVExportModalProps> = ({
+  isOpen,
+  onClose,
+  currentMonth,
+  employees,
+  reservations,
+  lunchMenus,
+  changeLogs,
+}) => {
   const [exportMonth, setExportMonth] = useState<string>(currentMonth);
   const [exportType, setExportType] = useState<'employees' | 'matrix' | 'lunch_orders' | 'logs' | 'template_employees'>('employees');
 
   if (!isOpen) return null;
 
   const handleDownload = () => {
-    const url = `/api/export/csv?month=${exportMonth}&type=${exportType}`;
-    window.open(url, '_blank');
+    const store = getLocalStore();
+    const emps = employees && employees.length > 0 ? employees : store.employees;
+    const res = reservations && reservations.length > 0 ? reservations : store.reservations;
+    const menus = lunchMenus && lunchMenus.length > 0 ? lunchMenus : store.lunchMenus;
+    const logs = changeLogs && changeLogs.length > 0 ? changeLogs : store.changeLogs;
+
+    generateAndDownloadCSV(exportType, exportMonth, emps, res, menus, logs);
+    onClose();
   };
 
   return (

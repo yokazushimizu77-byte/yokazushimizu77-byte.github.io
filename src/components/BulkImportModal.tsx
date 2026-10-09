@@ -13,6 +13,12 @@ import {
   Info,
 } from 'lucide-react';
 import { Employee } from '../types';
+import {
+  generateAndDownloadCSV,
+  bulkImportEmployeesLocally,
+  bulkImportReservationsLocally,
+  getLocalStore,
+} from '../utils/localStore';
 
 interface BulkImportModalProps {
   isOpen: boolean;
@@ -217,25 +223,38 @@ export const BulkImportModal: React.FC<BulkImportModalProps> = ({
           return;
         }
 
-        const res = await fetch('/api/employees/bulk-import', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            employeesData: validItems,
-            overwriteExisting,
-            modifiedById: currentEmployee.id,
-          }),
-        });
+        let serverSuccess = false;
+        try {
+          const res = await fetch('/api/employees/bulk-import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              employeesData: validItems,
+              overwriteExisting,
+              modifiedById: currentEmployee.id,
+            }),
+          });
 
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data.error || '一括登録に失敗しました');
+          const data = await res.json();
+          if (res.ok) {
+            setResultMessage({
+              type: 'success',
+              text: `一括登録が完了しました！（新規追加: ${data.addedCount}件 / 更新: ${data.updatedCount}件 / スキップ: ${data.skippedCount}件）`,
+            });
+            serverSuccess = true;
+          }
+        } catch (serverErr) {
+          // Server not reachable (e.g. GitHub Pages)
         }
 
-        setResultMessage({
-          type: 'success',
-          text: `一括登録が完了しました！（新規追加: ${data.addedCount}件 / 更新: ${data.updatedCount}件 / スキップ: ${data.skippedCount}件）`,
-        });
+        if (!serverSuccess) {
+          // Client-side fallback for static hosting / offline
+          const result = bulkImportEmployeesLocally(validItems, overwriteExisting);
+          setResultMessage({
+            type: 'success',
+            text: `一括登録が完了しました！（新規追加: ${result.addedCount}件 / 更新: ${result.updatedCount}件 / スキップ: ${result.skippedCount}件）`,
+          });
+        }
         onRefreshData();
       } else {
         const validItems = parsedReservations.filter((item) => item.isValid);
@@ -248,24 +267,45 @@ export const BulkImportModal: React.FC<BulkImportModalProps> = ({
           return;
         }
 
-        const res = await fetch('/api/reservations/bulk-import', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            reservationsData: validItems,
-            modifiedById: currentEmployee.id,
-          }),
-        });
+        let serverSuccess = false;
+        try {
+          const res = await fetch('/api/reservations/bulk-import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              reservationsData: validItems,
+              modifiedById: currentEmployee.id,
+            }),
+          });
 
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data.error || 'シフト一括登録に失敗しました');
+          const data = await res.json();
+          if (res.ok) {
+            setResultMessage({
+              type: 'success',
+              text: `出勤・シフトデータの一括登録が完了しました！（登録・更新: ${data.successCount}件 / スキップ: ${data.skippedCount}件）`,
+            });
+            serverSuccess = true;
+          }
+        } catch (serverErr) {
+          // Server not reachable (e.g. GitHub Pages)
         }
 
-        setResultMessage({
-          type: 'success',
-          text: `出勤・シフトデータの一括登録が完了しました！（登録・更新: ${data.successCount}件 / スキップ: ${data.skippedCount}件）`,
-        });
+        if (!serverSuccess) {
+          // Client-side fallback for static hosting / offline
+          const result = bulkImportReservationsLocally(
+            validItems as Array<{
+              date: string;
+              employeeId: string;
+              attendance: 'フル' | '午前' | '午後' | '休み';
+              lunchStatus: 'あり' | 'なし';
+              lunchMenuCode?: string;
+            }>
+          );
+          setResultMessage({
+            type: 'success',
+            text: `出勤・シフトデータの一括登録が完了しました！（登録・更新: ${result.successCount}件 / スキップ: ${result.skippedCount}件）`,
+          });
+        }
         onRefreshData();
       }
     } catch (err: any) {
@@ -365,45 +405,52 @@ export const BulkImportModal: React.FC<BulkImportModalProps> = ({
 
             {activeTab === 'employees' ? (
               <>
-                <a
-                  href="/api/export/csv?type=template_employees"
-                  download="template_employees_import.csv"
+                <button
+                  type="button"
+                  onClick={() => generateAndDownloadCSV('template_employees', '', [], [], [], [])}
                   className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
                   title="Excelで編集できるCSV雛形ファイルをダウンロード"
                 >
                   <Download className="h-3.5 w-3.5" />
                   <span>雛形CSVをDL</span>
-                </a>
+                </button>
 
-                <a
-                  href="/api/export/csv?type=employees"
-                  download="employees_master.csv"
+                <button
+                  type="button"
+                  onClick={() => {
+                    const store = getLocalStore();
+                    generateAndDownloadCSV('employees', '', employees && employees.length > 0 ? employees : store.employees, [], [], []);
+                  }}
                   className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
                   title="現在登録済みの全社員一覧をCSVダウンロード"
                 >
                   <FileSpreadsheet className="h-3.5 w-3.5" />
                   <span>現在の登録データをCSV保存</span>
-                </a>
+                </button>
               </>
             ) : (
               <>
-                <a
-                  href="/api/export/csv?type=template_reservations"
-                  download="template_reservations_import.csv"
+                <button
+                  type="button"
+                  onClick={() => generateAndDownloadCSV('template_reservations', '', [], [], [], [])}
                   className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
                 >
                   <Download className="h-3.5 w-3.5" />
                   <span>雛形CSVをDL</span>
-                </a>
+                </button>
 
-                <a
-                  href="/api/export/csv?type=matrix"
-                  download="attendance_matrix.csv"
+                <button
+                  type="button"
+                  onClick={() => {
+                    const store = getLocalStore();
+                    const nowMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+                    generateAndDownloadCSV('matrix', nowMonth, store.employees, store.reservations, store.lunchMenus, []);
+                  }}
                   className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
                 >
                   <FileSpreadsheet className="h-3.5 w-3.5" />
                   <span>現在のシフトをCSV保存</span>
-                </a>
+                </button>
               </>
             )}
           </div>

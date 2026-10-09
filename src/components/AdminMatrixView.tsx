@@ -31,6 +31,7 @@ import {
   FileSpreadsheet,
 } from 'lucide-react';
 import { BulkImportModal } from './BulkImportModal';
+import { generateAndDownloadCSV } from '../utils/localStore';
 
 interface AdminMatrixViewProps {
   currentEmployee: Employee;
@@ -595,15 +596,15 @@ export const AdminMatrixView: React.FC<AdminMatrixViewProps> = ({
               ))}
             </select>
 
-            <a
-              href="/api/export/csv?type=employees"
-              download="employees_master.csv"
+            <button
+              type="button"
+              onClick={() => generateAndDownloadCSV('employees', selectedMonth, employees, reservations, lunchMenus, [])}
               className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-colors cursor-pointer shrink-0"
               title="登録されている全職員の情報をCSVでダウンロード"
             >
               <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600" />
               <span>職員名簿CSV保存</span>
-            </a>
+            </button>
           </div>
         </div>
       </div>

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Employee } from '../types';
 import { Lock, Mail, Key, ShieldCheck, ArrowRight, AlertCircle, Sparkles } from 'lucide-react';
+import { authenticateLocally } from '../utils/localStore';
 
 interface LoginModalProps {
   employees: Employee[];
@@ -38,47 +39,41 @@ export const LoginModal: React.FC<LoginModalProps> = ({ employees, onLoginSucces
     setIsLoading(true);
 
     try {
+      // 1. Try server endpoint first (for Node.js dev/production runtime)
       const res = await fetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: cleanInput, password }),
       });
 
-      const data = await res.json();
-
-      if (res.ok && data.success) {
-        onLoginSuccess(data.employee);
-      } else {
-        // Fallback local check if server endpoint fails
-        const matched = employees.find(
-          (emp) =>
-            (emp.email && emp.email.trim().toLowerCase() === cleanInput) ||
-            toHalfWidth(emp.id).toLowerCase() === cleanInput
-        );
-        if (matched) {
-          const expected = matched.password || '1234';
-          if (password === expected) {
-            onLoginSuccess(matched);
-            return;
-          }
+      let data: any = null;
+      try {
+        const ct = res.headers.get('content-type');
+        if (ct && ct.includes('application/json')) {
+          data = await res.json();
         }
-        setErrorMessage(data.error || 'メールアドレスまたはパスワードが正しくありません。');
+      } catch (jsonErr) {
+        data = null;
+      }
+
+      if (res.ok && data?.success && data?.employee) {
+        onLoginSuccess(data.employee);
+        setIsLoading(false);
+        return;
       }
     } catch (err) {
-      // Local fallback
-      const matched = employees.find(
-        (emp) =>
-          (emp.email && emp.email.trim().toLowerCase() === cleanInput) ||
-          toHalfWidth(emp.id).toLowerCase() === cleanInput
-      );
-      if (matched && (password === matched.password || password === '1234')) {
-        onLoginSuccess(matched);
-      } else {
-        setErrorMessage('ログイン認証に失敗しました。入力内容をご確認ください。');
-      }
-    } finally {
-      setIsLoading(false);
+      // Network error or static hosting (e.g. GitHub Pages) where /api doesn't exist
+      console.warn('API endpoint unavailable, falling back to local authentication:', err);
     }
+
+    // 2. Client-side authentication fallback (supports GitHub Pages static hosting & offline mode)
+    const localResult = authenticateLocally(cleanInput, password);
+    if (localResult.success && localResult.employee) {
+      onLoginSuccess(localResult.employee);
+    } else {
+      setErrorMessage(localResult.error || 'メールアドレスまたはパスワードが正しくありません。');
+    }
+    setIsLoading(false);
   };
 
   const handleQuickFill = (emailValue: string, pass: string) => {
@@ -170,32 +165,51 @@ export const LoginModal: React.FC<LoginModalProps> = ({ employees, onLoginSucces
           <div className="pt-3 border-t border-slate-200">
             <div className="text-[11px] font-bold text-slate-500 mb-2 flex items-center space-x-1">
               <Sparkles className="h-3.5 w-3.5 text-amber-500" />
-              <span>動作確認・テスト用アカウント（ワンクリック入力）</span>
+              <span>ワンクリック簡単入力（アカウント選択）</span>
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-2">
               <button
                 type="button"
-                onClick={() => handleQuickFill('sato@example.com', '1234')}
-                className="p-2 bg-slate-50 hover:bg-emerald-50 hover:border-emerald-300 border border-slate-200 rounded-xl text-left transition-colors group cursor-pointer"
+                onClick={() => handleQuickFill('yokazu.shimizu77@gmail.com', 'Relife0501')}
+                className="w-full p-2.5 bg-indigo-50/70 hover:bg-indigo-100/80 border border-indigo-200 rounded-xl text-left transition-colors group cursor-pointer flex items-center justify-between"
               >
-                <div className="text-[10px] font-bold text-emerald-700 group-hover:text-emerald-800">
-                  一般社員アカウント
+                <div>
+                  <div className="text-[10px] font-bold text-indigo-700">
+                    福祉部・管理者アカウント
+                  </div>
+                  <div className="text-xs font-bold text-slate-800">清水 繁樹</div>
+                  <div className="text-[10px] text-indigo-900/60">yokazu.shimizu77@gmail.com / PASS: Relife0501</div>
                 </div>
-                <div className="text-[11px] font-bold text-slate-800">佐藤 花子</div>
-                <div className="text-[9px] text-slate-400 truncate">sato@example.com / PASS: 1234</div>
+                <span className="text-[10px] font-semibold text-indigo-600 bg-white px-2 py-1 rounded-lg border border-indigo-200 shadow-xs">
+                  選択
+                </span>
               </button>
 
-              <button
-                type="button"
-                onClick={() => handleQuickFill('yamada@example.com', '1234')}
-                className="p-2 bg-slate-50 hover:bg-indigo-50 hover:border-indigo-300 border border-slate-200 rounded-xl text-left transition-colors group cursor-pointer"
-              >
-                <div className="text-[10px] font-bold text-indigo-700 group-hover:text-indigo-800">
-                  管理者権限アカウント
-                </div>
-                <div className="text-[11px] font-bold text-slate-800">山田 太郎</div>
-                <div className="text-[9px] text-slate-400 truncate">yamada@example.com / PASS: 1234</div>
-              </button>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleQuickFill('sato@example.com', '1234')}
+                  className="p-2 bg-slate-50 hover:bg-emerald-50 hover:border-emerald-300 border border-slate-200 rounded-xl text-left transition-colors group cursor-pointer"
+                >
+                  <div className="text-[10px] font-bold text-emerald-700 group-hover:text-emerald-800">
+                    一般社員アカウント
+                  </div>
+                  <div className="text-[11px] font-bold text-slate-800">佐藤 花子</div>
+                  <div className="text-[9px] text-slate-400 truncate">sato@example.com / 1234</div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleQuickFill('yamada@example.com', '1234')}
+                  className="p-2 bg-slate-50 hover:bg-indigo-50 hover:border-indigo-300 border border-slate-200 rounded-xl text-left transition-colors group cursor-pointer"
+                >
+                  <div className="text-[10px] font-bold text-indigo-700 group-hover:text-indigo-800">
+                    開発部・管理者
+                  </div>
+                  <div className="text-[11px] font-bold text-slate-800">山田 太郎</div>
+                  <div className="text-[9px] text-slate-400 truncate">yamada@example.com / 1234</div>
+                </button>
+              </div>
             </div>
           </div>
         </form>

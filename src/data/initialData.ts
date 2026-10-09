@@ -9,6 +9,9 @@ export const INITIAL_EMPLOYEES: Employee[] = [
   { id: 'EMP006', name: '渡辺 裕子', department: '企画部', role: 'admin', avatarColor: 'bg-indigo-600', email: 'watanabe@example.com', password: '1234' },
   { id: 'EMP007', name: '中村 拓海', department: '開発部', role: 'employee', avatarColor: 'bg-teal-600', email: 'nakamura@example.com', password: '1234' },
   { id: 'EMP008', name: '小林 誠', department: '企画部', role: 'employee', avatarColor: 'bg-orange-600', email: 'kobayashi@example.com', password: '1234' },
+  { id: 'EMP009', name: '武田 信玄', department: '営業部', role: 'employee', avatarColor: 'bg-indigo-600', email: 'takeda@example.com', password: '1234' },
+  { id: 'EMP010', name: '吉田 健一', department: '開発部', role: 'admin', avatarColor: 'bg-amber-600', email: 'yoshida@example.com', password: '1234' },
+  { id: 'EMP011', name: '清水 繁樹', department: '福祉部', role: 'admin', avatarColor: 'bg-amber-600', email: 'yokazu.shimizu77@gmail.com', password: 'Relife0501' },
 ];
 
 export const INITIAL_LUNCH_MENUS: LunchMenu[] = [
