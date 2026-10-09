@@ -28,10 +28,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
+          cache: 'npm' # 👈 これがロックファイルを探す原因になっています
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci # 👈 これもロックファイルが必須のコマンドです
+
 
       - name: Build
         env:
