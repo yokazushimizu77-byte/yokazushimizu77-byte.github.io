@@ -1,0 +1,6 @@
+{
+  "name": "継続支援リライフ　シフト管理",
+  "description": "社員の出勤・昼食予約をリアルタイム管理。当月・次月予約、管理者マトリクス一覧、変更履歴ログ、CSVエクスポート、プッシュ通知機能に対応。",
+  "requestFramePermissions": ["notifications"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
