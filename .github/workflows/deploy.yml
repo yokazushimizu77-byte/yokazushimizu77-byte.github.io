@@ -28,11 +28,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm' # 👈 これがロックファイルを探す原因になっています
+          # cache: 'npm' 👈 行頭に # をつけて無効化（またはこの行を削除）します
 
       - name: Install dependencies
-        run: npm ci # 👈 これもロックファイルが必須のコマンドです
-
+        run: npm install --legacy-peer-deps # 👈 ロックファイルがなくても動くコマンドに変更します
 
       - name: Build
         env:
